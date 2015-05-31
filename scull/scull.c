@@ -44,13 +44,13 @@ static struct file_operations scull_fops = {
 
 static void scull_trim(struct scull_dev *dev) {
     struct scull_qset *qset;
-    void **q;
+    int i;
 
     for (qset = dev->data; qset; qset = dev->data) {
         dev->data = qset->next;
-        if ((q = qset->data) /* != NULL */) {
-            while (*q)
-                kfree(*q++);
+        if (qset->data) {
+            for (i = 0; i < dev->qset && qset->data[i]; i++)
+                kfree(qset->data[i]);
             kfree(qset->data);
         }
         kfree(qset);

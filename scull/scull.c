@@ -5,6 +5,7 @@
 #include <linux/fs.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/proc_fs.h>
 
 #include "scull.h"
 
@@ -96,7 +97,6 @@ static ssize_t scull_read(struct file *filp, char __user *buff,
         count = dev->size - *offp;
     if (count > dev->quantum - s_pos)
         count = dev->quantum - s_pos;
-    pr_alert("scull read: %d, %d, count: %d.\n", p_pos, s_pos, count);
     if (copy_to_user(buff, qset->data[p_pos] + s_pos, count)) {
         rv = -EFAULT;
         goto out;
@@ -146,7 +146,6 @@ static ssize_t scull_write(struct file *filp, const char __user *buff,
     }
     if (count > dev->quantum - s_pos)
         count = dev->quantum - s_pos;
-    pr_alert("scull write: %d, %d, count: %d.\n", p_pos, s_pos, count);
     if (copy_from_user(qset->data[p_pos] + s_pos, buff, count)) {
         rv = -EFAULT;
         goto out;
@@ -159,6 +158,31 @@ static ssize_t scull_write(struct file *filp, const char __user *buff,
 out:
     up(&dev->sem);
     return rv;
+}
+
+static int scull_read_proc(char *page, char **start, off_t offset, int count,
+    int *eof, void *data)
+{
+    struct scull_qset *qset;
+    int n_qset, n_q, i, len = 0;
+
+    for (i = 0; i < scull_nr_devs; i++) {
+        if (down_interruptible(&devices[i].sem))
+            return -ERESTARTSYS;
+        len += sprintf(page + len, "Device %d:\n", i);
+        for (qset = devices[i].data, n_qset = 0; qset;
+             qset = qset->next, n_qset++)
+        {
+            if (qset->data) {
+                for (n_q = 0; n_q < devices[i].qset && qset->data[n_q]; n_q++)
+                    ;
+                len += sprintf(page + len, "  qset%d:\t%d\n", n_qset, n_q);
+            }
+        }
+        up(&devices[i].sem);
+    }
+    *eof = 1;
+    return len;
 }
 
 static void __init scull_setup_cdev(struct scull_dev *dev, int index) {
@@ -203,6 +227,7 @@ static int __init scull_init(void) {
         init_MUTEX(&devices[i].sem);
         scull_setup_cdev(devices + i, i);
     }
+    create_proc_read_entry("scullmem", 0, NULL, scull_read_proc, NULL);
     return 0;
 }
 
@@ -216,6 +241,7 @@ static void __exit scull_exit(void) {
         kfree(devices);
     }
     unregister_chrdev_region(MKDEV(scull_major, scull_minor), scull_nr_devs);
+    remove_proc_entry("scullmem", NULL);
 }
 
 module_init(scull_init);

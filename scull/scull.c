@@ -6,6 +6,7 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 
 #include "scull.h"
 
@@ -185,6 +186,65 @@ static int scull_read_proc(char *page, char **start, off_t offset, int count,
     return len;
 }
 
+/* use seq_file. */
+static void *scull_seq_start(struct seq_file *sfile, loff_t *pos) {
+    return *pos >= scull_nr_devs ? NULL : devices + *pos;
+}
+
+static void *scull_seq_next(struct seq_file *sfile, void *data, loff_t *pos) {
+    (*pos)++;
+    return *pos >= scull_nr_devs ? NULL : devices + *pos;
+}
+
+static int scull_seq_show(struct seq_file *sfile, void *data) {
+    struct scull_dev *dev = data;
+    struct scull_qset *qset;
+    int i;
+    if (down_interruptible(&dev->sem))
+        return -ERESTARTSYS;
+    seq_printf(sfile, "device %i: qset %i, q %i, sz %li\n",
+        (int)(dev - devices), dev->qset, dev->quantum, dev->size);
+    for (qset = dev->data; qset; qset = qset->next) {
+        seq_printf(sfile, "  item at %p, qset at %p\n", qset, qset->data);
+        if (qset->data /* && !qset->next */ ) {
+            for (i = 0; i < dev->qset && qset->data[i]; i++) {
+                seq_printf(sfile, "    %i\t: %p\n", i, qset->data[i]);
+            }
+        }
+    }
+    up(&dev->sem);
+    return 0;
+}
+
+static void scull_seq_stop(struct seq_file *sfile, void *data) {
+}
+
+static struct seq_operations scull_seq_ops = {
+    .start  = scull_seq_start,
+    .next   = scull_seq_next,
+    .show   = scull_seq_show,
+    .stop   = scull_seq_stop
+};
+
+static int scull_proc_open(struct inode *inode, struct file *filp) {
+    return seq_open(filp, &scull_seq_ops);
+}
+
+static struct file_operations scull_proc_fops = {
+    .owner       = THIS_MODULE,
+    .open        = scull_proc_open,
+    .read        = seq_read,
+    .llseek      = seq_lseek,
+    .release     = seq_release,
+};
+
+static void __init scull_setup_seq_proc(void) {
+    struct proc_dir_entry *proc_entry;
+    proc_entry = create_proc_entry("scullseq", 0, NULL);
+    if (proc_entry)
+        proc_entry->proc_fops = &scull_proc_fops;
+}
+
 static void __init scull_setup_cdev(struct scull_dev *dev, int index) {
     dev_t devno = MKDEV(scull_major, scull_minor + index);
     int err;
@@ -228,6 +288,7 @@ static int __init scull_init(void) {
         scull_setup_cdev(devices + i, i);
     }
     create_proc_read_entry("scullmem", 0, NULL, scull_read_proc, NULL);
+    scull_setup_seq_proc();
     return 0;
 }
 
@@ -242,6 +303,7 @@ static void __exit scull_exit(void) {
     }
     unregister_chrdev_region(MKDEV(scull_major, scull_minor), scull_nr_devs);
     remove_proc_entry("scullmem", NULL);
+    remove_proc_entry("scullseq", NULL);
 }
 
 module_init(scull_init);

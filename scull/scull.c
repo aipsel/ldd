@@ -35,6 +35,7 @@ static ssize_t scull_read(struct file *filp, char __user *buff,
     size_t count, loff_t *offp);
 static ssize_t scull_write(struct file *filp, const char __user *buff,
     size_t count, loff_t *offp);
+static loff_t scull_llseek(struct file *filp, loff_t offset, int whence);
 
 static struct file_operations scull_fops = {
     .owner       = THIS_MODULE,
@@ -42,6 +43,7 @@ static struct file_operations scull_fops = {
     .release     = scull_release,
     .read        = scull_read,
     .write       = scull_write,
+    .llseek      = scull_llseek,
 };
 
 static void scull_trim(struct scull_dev *dev) {
@@ -167,6 +169,23 @@ static ssize_t scull_write(struct file *filp, const char __user *buff,
 out:
     up(&dev->sem);
     return rv;
+}
+
+static loff_t scull_llseek(struct file *filp, loff_t offset, int whence) {
+    struct scull_dev *dev = filp->private_data;
+
+    switch (whence) {
+    case SEEK_END:
+        offset += dev->size;
+        break;
+    case SEEK_CUR:
+        offset += filp->f_pos;
+        break;
+    }
+    if (offset < 0)
+        return -EINVAL;
+    filp->f_pos = offset;
+    return offset;
 }
 
 static int scull_read_proc(char *page, char **start, off_t offset, int count,
